@@ -5,3 +5,8 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
+
+# Regenerate each client's brain once a day at 7:30 AM UTC (3:30 PM SGT).
+# The function skips any client regenerated within the last 20 hours.
+[functions."scheduled-brains"]
+  schedule = "30 7 * * *"
