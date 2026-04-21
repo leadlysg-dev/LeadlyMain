@@ -1,6 +1,26 @@
-# Leadly Dashboard v2 — Sheets-backed
+# Leadly Dashboard v3 — Live WhatsApp Feed
 
-Everything lives in Google Sheets. Dashboard reads/writes via Netlify Functions.
+Everything still lives in Google Sheets. Dashboard now shows every WhatsApp message streaming in, with Claude's classification for each one (todo / important / noise / unrouted) and the reasoning behind the call.
+
+---
+
+## What's new in v3
+
+- **Live Feed tab** — every inbound WA message shown chronologically with a colored classification badge, auto-refreshes every 30s
+- **MESSAGES sheet tab** — every message now logged (not just ones that produced todos). You have a full audit trail
+- **Claude reasoning saved** — one-line explanation of why a message got classified as todo vs important vs noise, visible inline
+- **Per-client Messages section** — each client page now shows their recent WA messages with the same filters
+- **Reclassify & promote** — if Claude got a call wrong, one click changes the classification; one input promotes any message into a todo
+- **Unrouted handling** — when the webhook can't match a contact to a client, it still gets logged and you can assign it from the UI
+
+The four classifications:
+
+| Class | Meaning | Example |
+|---|---|---|
+| **Todo** (green) | Clear actionable task | "Can you update the ad copy?" |
+| **Important** (amber) | Needs human review | "Why did leads drop last week?" |
+| **Noise** (grey) | Chitchat, confirmations | "ok thanks!" |
+| **Unrouted** (red) | Can't match to a client | Unknown contact name |
 
 ---
 
@@ -9,23 +29,21 @@ Everything lives in Google Sheets. Dashboard reads/writes via Netlify Functions.
 1. Go to https://sheets.google.com
 2. Click **Blank spreadsheet**
 3. Name it **Leadly Dashboard**
-4. Look at the URL — copy the Sheet ID:
+4. Copy the Sheet ID from the URL:
    `https://docs.google.com/spreadsheets/d/THIS_PART_IS_THE_ID/edit`
 5. Share the sheet with your service account as **Editor**:
    `aaro-reporting@aaro-reporting.iam.gserviceaccount.com`
 
-Save that Sheet ID — you need it in Step 3.
+**If you already had v2 running, you can reuse the same sheet.** The new MESSAGES tab will be auto-created when the app first loads.
 
 ---
 
 ## Step 2: Replace your local files
 
-Delete your old `leadly-app` folder and unzip this new one:
-
 ```bash
 rm -rf ~/leadly-app
 cd ~/Downloads
-unzip leadly-app.zip -d ~/leadly-app
+unzip leadly-app-v3.zip -d ~/leadly-app
 cd ~/leadly-app
 npm install
 ```
@@ -36,7 +54,7 @@ npm install
 
 Go to your Netlify site → **Site configuration** → **Environment variables**.
 
-Add these 5 variables:
+Add these 6 variables:
 
 | Variable | Value | Where to find it |
 |---|---|---|
@@ -45,6 +63,7 @@ Add these 5 variables:
 | `LEADLY_SHEET_ID` | (from Step 1) | The Sheet ID you just copied |
 | `ANTHROPIC_API_KEY` | `sk-ant-...` | Your Anthropic key |
 | `TELEGRAM_BOT_TOKEN` | (your bot token) | Same @Leadly_sg_bot token |
+| `TELEGRAM_CHAT_ID` | (group chat ID) | For high-urgency alerts |
 
 ---
 
@@ -52,20 +71,18 @@ Add these 5 variables:
 
 ```bash
 cd ~/leadly-app
-git init
 git add .
-git commit -m "v2 sheets backend"
-git remote add origin https://github.com/YOUR_USERNAME/leadly-dashboard.git
-git push -u origin main --force
+git commit -m "v3 live feed"
+git push
 ```
 
-Wait for Netlify to finish deploying (check the Deploys tab).
+Wait for Netlify to finish deploying.
 
 ---
 
-## Step 5: Seed your clients
+## Step 5: Seed your clients (first-time only)
 
-Once deployed, open this URL in your browser:
+If this is a fresh sheet, open this URL once:
 
 ```
 https://YOUR-SITE.netlify.app/.netlify/functions/seed
@@ -73,63 +90,52 @@ https://YOUR-SITE.netlify.app/.netlify/functions/seed
 
 You should see: `{"message":"Seeded 4 clients"}`
 
-This creates the CLIENTS, TODOS, and FLAGGED tabs in your Google Sheet and populates your 4 clients (AARO, Aether Athletics, HomeUp, Axis Collective).
-
 ---
 
 ## Step 6: Open the dashboard
 
-Go to your Netlify URL. You should see your 4 clients with their contacts loaded from the sheet.
+Go to your Netlify URL. The **Live Feed** is now the default view.
+
+As WhatsApp messages come in through your GHL webhook, they'll appear here within 30 seconds (or hit Refresh for instant).
 
 ---
 
-## Running locally (for development)
-
-You need Netlify CLI to run the functions locally:
-
-```bash
-npm install -g netlify-cli
-```
-
-Create a `.env` file (copy from the example):
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and fill in your real values. Then run:
-
-```bash
-netlify dev
-```
-
-This runs BOTH the frontend AND the Netlify Functions locally. Opens at `http://localhost:8888`. Your functions work at `http://localhost:8888/.netlify/functions/...`
-
-Regular `npm run dev` only runs the frontend — the API calls won't work locally without `netlify dev`.
-
----
-
-## How it all connects
+## How it works now
 
 ```
-You add a todo manually
-  → Dashboard calls /.netlify/functions/save-todo
-  → Function writes to Google Sheet TODOS tab
-  → Dashboard refreshes from sheet
-
 Client sends WhatsApp
   → GHL workflow fires webhook to /.netlify/functions/ghl-webhook
-  → Function sends message to Claude
-  → Claude extracts todos → written to TODOS tab
-  → Unclear messages → written to FLAGGED tab
-  → High urgency → Telegram alert
-
-You paste Fathom transcript
-  → Dashboard calls /.netlify/functions/process-fathom
-  → Function sends transcript to Claude
-  → Todos + flagged written directly to sheet
-  → Dashboard refreshes
+  → Router matches contact/group to a client (or flags as unrouted)
+  → Claude classifies: todo / important / noise
+  → EVERY message written to MESSAGES sheet tab (with reasoning)
+  → If todo → also written to TODOS
+  → If important → also written to FLAGGED
+  → If high-urgency todo → Telegram alert fires
+  → Live Feed in the app shows it within 30s
 ```
+
+---
+
+## Live Feed UI
+
+The sidebar now has three levels:
+
+- **Live Feed** — all messages, all clients (with new-message counter badge)
+- **Dashboard** — merged view of todos and flagged across clients
+- **Per client** — contacts, flagged, todos, recent messages, archive
+
+### In the Live Feed
+
+Top strip shows stat tiles: **All / Todos / Important / Noise / Unrouted**. Click any tile to filter.
+
+Client dropdown + type dropdown let you slice further (e.g. "show only AARO's important messages").
+
+Each message card has a colored left border matching its classification. Click to expand → see the full message, Claude's reasoning, any linked todos/flags, and action buttons:
+
+- **✓ Mark reviewed** — hides it from "new" counts without deleting
+- **→ Todo** — types a custom todo text and promotes the message into TODOS
+- **Assign client** — for unrouted messages, pick the client and create a todo in one step
+- **→ Todo / → Important / → Noise** — if Claude misclassified, override it
 
 ---
 
@@ -140,14 +146,15 @@ You paste Fathom transcript
 | `GOOGLE_SA_EMAIL` | Service account for Sheets API |
 | `GOOGLE_SA_PRIVATE_KEY` | Private key (base64) for auth |
 | `LEADLY_SHEET_ID` | The master dashboard Sheet |
-| `ANTHROPIC_API_KEY` | Claude API for Fathom + WhatsApp processing |
+| `ANTHROPIC_API_KEY` | Claude API for WhatsApp classification + Fathom |
 | `TELEGRAM_BOT_TOKEN` | Telegram alerts for urgent todos |
+| `TELEGRAM_CHAT_ID` | Target group for alerts |
 
 ---
 
-## GHL Webhook setup (per client)
+## GHL Webhook setup (unchanged from v2)
 
-After the dashboard is working, set up the WhatsApp automation:
+After the dashboard is working:
 
 1. In each GHL sub-account → **Automations** → **Workflows**
 2. New workflow → trigger: **Customer Reply**
@@ -158,10 +165,26 @@ After the dashboard is working, set up the WhatsApp automation:
 {
   "locationId": "{{location.id}}",
   "contactName": "{{contact.name}}",
+  "contactPhone": "{{contact.phone}}",
+  "conversationName": "{{conversation.name}}",
   "messageBody": "{{message.body}}",
   "direction": "inbound"
 }
 ```
 6. Turn on and publish
 
-Update the `LOCATION_MAP` in `netlify/functions/ghl-webhook.js` with each client's real GHL location ID.
+The routing table in `netlify/functions/ghl-webhook.js` maps contact names and group chat names to client IDs — update it when you add new clients or contacts.
+
+---
+
+## Tuning the classifier
+
+The Claude prompt lives in `netlify/functions/ghl-webhook.js`. Current rules:
+
+- **Todo** = clear, actionable task
+- **Important** = question, concern, complaint, strategic feedback, billing mention, ambiguity
+- **Noise** = small talk, thanks, emoji, "ok", "got it", confirmations
+
+When in doubt between important and noise → important wins. When in doubt between todo and important → important wins (you can promote it with one click in the UI).
+
+If you want Claude to be more aggressive about creating todos, edit the prompt and tighten the noise rules. If too many things get flagged as important, add more examples of what counts as noise.
